@@ -1,0 +1,90 @@
+---
+description: Regras para desenvolvimento de consumers NestJS + RabbitMQ
+globs: src/**/*.ts
+alwaysApply: true
+---
+
+# Contexto do Projeto
+Este projeto usa **NestJS** com **TypeScript** para processar mensagens de filas/exchanges do **RabbitMQ**. O banco é **MongoDB** (Mongoose) e o LLM é integrado via **Mistral** (`@mistralai/mistralai`). Utilize NPM como gerenciador de pacotes.
+
+## RabbitMQ (AMQP)
+
+- **Nao** use `amqplib` diretamente no codigo de dominio.
+- Use o modulo de consumo adotado no servico (`@golevelup/nestjs-rabbitmq`) e decorators como `@RabbitSubscribe`.
+- Classes Consumer devem receber o evento bruto, normalizar/parsing do payload e delegar para um use case.
+- O fluxo inbound WhatsApp usa exchange fanout e padrao `message.inbound.v1`; o payload pode vir envelopado no formato Nest (`{ pattern, data }`).
+- Variaveis principais: `RABBITMQ_URL`, `RABBITMQ_WHATSAPP_INBOUND_EXCHANGE`, `RABBITMQ_QUEUE_WHATSAPP_INBOUND_PERSIST` (fila unica: persist + IA em sequencia).
+
+# Estrutura de Pastas Obrigatória
+Ao criar ou modular código, siga rigorosamente a estrutura abaixo:
+
+```
+src/
+├── config/
+│   └── config.ts          # Objeto com valores de ambiente (env)
+├── shared/                 # Código reutilizável
+│   ├── utils/
+│   └── services/
+└── modules/
+    └── [module-name]/
+        ├── exceptions/
+        │   └── invalid-data.exception.ts  # Erro customizado para validação/regra de negócio
+        ├── entities/
+        │   └── module-entity.ts           # Entidade Mongoose (decoradores @nestjs/mongoose)
+        ├── datasources/
+        │   └── module-entity.datasource.ts # Camada de acesso ao banco (Mongoose)
+        ├── usecases/
+        │   ├── dtos/
+        │   │   └── create-user-input.dto.ts   # Validação com class-validator
+        │   ├── create-[feature-name].usecase.ts
+        │   └── create-[feature-name]-usecase.spec.ts
+        ├── [module-name].consumer.ts
+        ├── [module-name]-consumer.spec.ts
+        └── [module-name].module.ts
+```
+
+**Referencia neste repositorio:** o fluxo WhatsApp inbound esta em `src/modules/inbound/` — `inbound.consumer.ts` (subscribes), `parse-inbound-payload.ts`, `usecases/persist-inbound-message.usecase.ts`, `usecases/process-ai-reply.usecase.ts`, `inbound.module.ts`. Schemas Mongoose partilhados em `src/schemas/`; contratos em `src/contracts/`; servicos de IA em `src/ai/`.
+
+# Regras de Implementacao
+
+## 1. Camadas e Responsabilidades
+- **Consumer Class:** define binding/queue/pattern de consumo e repassa dados para handler/use case.
+- **Parser/Normalizer:** interpreta envelope AMQP e valida contrato minimo do evento.
+- **Handler/UseCase:** concentra regras de negocio e orquestra datasource/servicos externos.
+- **Datasource/Model:** apenas acesso a dados (CRUD), sem regra de negocio.
+- **Entity/Schema:** modelos Mongoose e indices.
+
+## 2. Diretriz Principal de Consumo
+
+Toda classe Consumer deve:
+- declarar claramente exchange, queue e routing/pattern;
+- receber o payload bruto;
+- chamar um parser centralizado (ex.: `parse-inbound-payload.ts`);
+- delegar para um handler/use case sem embutir regra de negocio pesada no metodo de subscribe.
+
+## 3. Tratamento de Erros
+
+- Erros de dominio devem ser classes que estendem `Error` e ficam na pasta `exceptions/` quando fizer sentido.
+- Erros de parsing/contrato invalido devem gerar log estruturado e descarte controlado da mensagem (sem derrubar o consumer inteiro).
+- Erros transitorios (infra externa) devem usar estrategia de retry/backoff quando aplicavel.
+
+## 4. Testes
+
+- **Consumer Class:** testar se repassa payload corretamente para parser/handler.
+- **Parser:** testar envelopes validos e invalidos.
+- **UseCase/Handler:** testar cenarios feliz/triste e isolamento por `organizationId`/`agentId`/`conversationId`.
+
+## 5. Integracao com LLM (Mistral)
+- Chamadas ao modelo devem ficar encapsuladas em `LlmClient` (ou servico equivalente) e nunca diretamente na classe Consumer.
+- O Consumer apenas orquestra entrada/saida; montagem de contexto e chamada ao LLM pertencem ao handler/use case.
+
+# Comportamento Esperado do Assistente
+Ao gerar codigo para este projeto:
+1. Siga a estrutura de pastas definida acima.
+2. Sempre crie os arquivos de teste correspondentes (`.spec.ts`) junto com a implementacao.
+3. Utilize injecao de dependencia do NestJS para conectar as camadas.
+4. Mantenha classes Consumer finas: configuracao de consumo + delegacao para use cases.
+5. Ao criar novo fluxo de consumo, inclua parser, handler e testes do fluxo.
+
+- Utilize sempre ObjectId para IDs salvos no MongoDB.
+- Evite acoplar logica especifica em componentes genericos. O use case deve conter a regra do cenario; componentes de infra devem ser reaproveitaveis.

@@ -25,6 +25,8 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+Consumidor de mensagens WhatsApp inbound: módulo `src/modules/inbound` (consumer + use cases), conexão e filas via **`@golevelup/nestjs-rabbitmq`** (ver [docs/amqp-nestjs.md](docs/amqp-nestjs.md)). Respostas automáticas usam a API **Mistral** (`@mistralai/mistralai`), configurada em `src/ai/llm-client.ts` e variáveis `MISTRAL_*` (ver [.env.example](.env.example)).
+
 ## Project setup
 
 ```bash
